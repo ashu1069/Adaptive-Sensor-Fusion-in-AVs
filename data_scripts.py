@@ -3,6 +3,7 @@ import open3d as o3d
 import os
 import shutil
 from tqdm import tqdm
+import sys
 
 def read_velodyne_bin(file_path):
     # Load the .bin file
@@ -48,7 +49,6 @@ def extract_sensor_data(root_data_path:str, new_sensor_data_path:str,
     metadata = {}
     for folder in sub_folders:
         metadata[folder] = os.listdir(os.path.join(root_data_path, 'image_left', folder))
-    
     target_data_path = os.path.join(root_data_path, 'image_right')    
     if not target_dir_name in os.listdir(root_data_path):
         os.mkdir(target_data_path)
@@ -64,9 +64,10 @@ def extract_sensor_data(root_data_path:str, new_sensor_data_path:str,
                 raise FileNotFoundError
         
         # transfer data to new location
-        os.mkdir(os.path.join(target_data_path, folder))
+        if folder not in os.listdir(target_data_path):
+            os.mkdir(os.path.join(target_data_path, folder))
         for img in tqdm(imgs):
-            shutil.copy(os.path.join(root_data_path, 'image_left', folder, img),
+            shutil.copy(os.path.join(new_sensor_data_path, folder, img),
                         os.path.join(target_data_path,folder,img))
 
 if __name__ == "__main__":
