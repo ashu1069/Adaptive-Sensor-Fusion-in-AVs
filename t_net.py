@@ -1,94 +1,111 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-import sys
-import os
 
 class TNet(nn.Module):
-    def __init__(self):
+    def __init__(self, k=3):
         super(TNet, self).__init__()
+        self.k = k
         
-        # Input transform layers
-        self.input_transform = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=[1,3], stride=[1,1]),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            
-            nn.Conv2d(64, 128, kernel_size=[1,1], stride=[1,1]),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            
-            nn.Conv2d(128, 1024, kernel_size=[1,1], stride=[1,1]),
-            nn.BatchNorm2d(1024),
-            nn.ReLU(),
-        )
+        # Shared MLP layers
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=(1, k))
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=(1, 1))
+        self.conv3 = nn.Conv2d(128, 1024, kernel_size=(1, 1))
         
-        self.input_mlp = nn.Sequential(
-            nn.Linear(1024, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-        )
+        # Fully connected layers
+        self.fc1 = nn.Linear(1024, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, k * k)
         
-        self.input_transform_layer = nn.Linear(256, 9)  # 3*3 matrix
+        # Batch normalization layers
+        self.bn1 = nn.BatchNorm2d(64)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.bn3 = nn.BatchNorm2d(1024)
+        self.bn4 = nn.BatchNorm1d(512)
+        self.bn5 = nn.BatchNorm1d(256)
         
-        # Feature transform layers
-        self.feature_transform = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=[1,1], stride=[1,1]),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            
-            nn.Conv2d(64, 128, kernel_size=[1,1], stride=[1,1]),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            
-            nn.Conv2d(128, 1024, kernel_size=[1,1], stride=[1,1]),
-            nn.BatchNorm2d(1024),
-            nn.ReLU(),
-        )
+        # Initialize the final FC layer with zeros
+        nn.init.zeros_(self.fc3.weight)
+        nn.init.zeros_(self.fc3.bias)
         
-        self.feature_mlp = nn.Sequential(
-            nn.Linear(1024, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-        )
+    def forward(self, x):
+        batch_size = x.size(0)
         
-        self.feature_transform_layer = nn.Linear(256, 64*64)  # K*K matrix
+        # Shared MLP with batch norm and ReLU
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        
+        # Global max pooling
+        x = x.view(batch_size, 1024, -1)
+        x = torch.max(x, 2)[0]
+        
+        # Fully connected layers
+        x = F.relu(self.bn4(self.fc1(x)))
+        x = F.relu(self.bn5(self.fc2(x)))
+        
+        # Add identity matrix to the output
+        identity = torch.eye(self.k, requires_grad=True).repeat(batch_size, 1, 1)
+        if x.is_cuda:
+            identity = identity.cuda()
+        x = self.fc3(x).view(-1, self.k, self.k) + identity
+        
+        return x
+
+class TransformNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.input_transform = TNet(k=3)
+        self.feature_transform = TNet(k=64)
+
+        self.conv1 = nn.Conv1d(3, 64, kernel_size=1)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=1)
+        self.conv3 = nn.Conv1d(128, 1024, kernel_size=1)
+
+        self.bn1 = nn.BatchNorm1d(64)   
+        self.bn2 = nn.BatchNorm1d(128)
+        self.bn3 = nn.BatchNorm1d(1024)
+
+    def forward(self, x):
+        # Reshape input for TNet (batch_size, 1, points, channels)
+        x_transform = x.unsqueeze(1).transpose(2, 3)
+        matrix3x3 = self.input_transform(x_transform)
+        
+        # batch matrix multiplication
+        x = torch.bmm(torch.transpose(x, 1, 2), matrix3x3).transpose(1, 2)
+
+        x = F.relu(self.bn1(self.conv1(x)))
+
+        # Reshape for feature transform
+        x_transform = x.unsqueeze(1).transpose(2, 3)
+        matrix64x64 = self.feature_transform(x_transform)
+        x = torch.bmm(torch.transpose(x, 1, 2), matrix64x64).transpose(1, 2)
+
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.bn3(self.conv3(x))
+        x = nn.MaxPool1d(x.size(-1))(x)
+        output = nn.Flatten(1)(x)
+
+        return output, matrix3x3, matrix64x64
+
+
+if __name__ == "__main__":
+    # Create a sample input (batch_size=2, channels=3, points=5)
+    sample_input = torch.randn(2, 3, 5)
+    # Reshape for TNet input (batch_size, 1, points, channels)
+    tnet_input = sample_input.unsqueeze(1).transpose(2, 3)
     
-    def forward_input_transform(self, point_cloud):
-        batch_size = point_cloud.size(0)
-        input_image = point_cloud.unsqueeze(2)
-        
-        net = self.input_transform(input_image.transpose(1,3))
-        net = torch.max(net, 2, keepdim=True)[0]
-        net = net.view(batch_size, -1)
-        net = self.input_mlp(net)
-        
-        transform = self.input_transform_layer(net)
-        init_transform = torch.eye(3, device=point_cloud.device).view(1, 9).repeat(batch_size, 1)
-        transform = transform.view(batch_size, 3, 3)
-        transform += init_transform.view(batch_size, 3, 3)
-        
-        return transform
+    # Test TNet
+    tnet = TNet(k=3)
+    tnet_output = tnet(tnet_input)
+    print("TNet output shape:", tnet_output.shape)  # Should be [2, 3, 3]
     
-    def forward_feature_transform(self, inputs):
-        batch_size = inputs.size(0)
-        
-        net = self.feature_transform(inputs.transpose(1,3))
-        net = torch.max(net, 2, keepdim=True)[0]
-        net = net.view(batch_size, -1)
-        net = self.feature_mlp(net)
-        
-        transform = self.feature_transform_layer(net)
-        init_transform = torch.eye(64, device=inputs.device).view(1, 64*64).repeat(batch_size, 1)
-        transform = transform.view(batch_size, 64, 64)
-        transform += init_transform.view(batch_size, 64, 64)
-        
-        return transform
+    # Test TransformNet
+    transform_net = TransformNet()
+    features, mat3, mat64 = transform_net(sample_input)
+    print("\nTransformNet outputs:")
+    print("Features shape:", features.shape)        # Should be [2, 1024]
+    print("Matrix3x3 shape:", mat3.shape)          # Should be [2, 3, 3]
+    print("Matrix64x64 shape:", mat64.shape)       # Should be [2, 64, 64]
+
