@@ -11,8 +11,8 @@ class AdaptiveFusion(nn.Module):
         self.lidar_dim = lidar_dim
         self.image_dim = image_dim
         
-        # PCA layers for dimension reduction
-        self.image_pca = None
+        # Remove PCA and replace with linear projection
+        self.image_projection = nn.Linear(image_dim, output_dim)
         
         # Weighted fusion parameters (trainable)
         self.weight_gate = nn.Sequential(
@@ -34,18 +34,10 @@ class AdaptiveFusion(nn.Module):
         self.lidar_adapter = nn.Linear(lidar_dim, output_dim)
         self.image_adapter = nn.Linear(output_dim, output_dim)
     
-    def _initialize_pca(self, image_features):
-        if self.image_pca is None:
-            self.image_pca = PCA(n_components=self.output_dim)
-            self.image_pca.fit(image_features.cpu().detach().numpy())
-    
     def _process_image_features(self, image_features):
-        # Apply PCA and adaptation
-        image_features_np = image_features.cpu().detach().numpy()
-        image_features_reduced = torch.FloatTensor(
-            self.image_pca.transform(image_features_np)
-        ).to(image_features.device)
-        return self.image_adapter(image_features_reduced)
+        # Direct linear projection instead of PCA
+        projected_features = self.image_projection(image_features)
+        return self.image_adapter(projected_features)
     
     def forward(self, lidar_features=None, image_features=None):
         """
@@ -65,18 +57,10 @@ class AdaptiveFusion(nn.Module):
         
         # Case 2: Only image available
         if has_image and not has_lidar:
-            if self.training:
-                self._initialize_pca(image_features)
             return self._process_image_features(image_features)
         
         # Case 3: Both modalities available - do adaptive fusion
         if has_lidar and has_image:
-            batch_size = lidar_features.size(0)
-            
-            # Process features
-            if self.training:
-                self._initialize_pca(image_features)
-            
             adapted_lidar = self.lidar_adapter(lidar_features)
             adapted_image = self._process_image_features(image_features)
             
@@ -88,12 +72,19 @@ class AdaptiveFusion(nn.Module):
             lidar_weight = weights[:, 0].unsqueeze(1)
             image_weight = weights[:, 1].unsqueeze(1)
             
+            # Print weights
+            print(f"\nAdaptive Weights:")
+            print(f"LiDAR weights: {lidar_weight.mean().item():.4f}")
+            print(f"Image weights: {image_weight.mean().item():.4f}")
+            
             # Weighted combination
             weighted_fusion = (lidar_weight * adapted_lidar + 
                              image_weight * adapted_image)
             
             # Calculate and apply gating values
             gate_values = self.fusion_gate(combined_features)
+            print(f"Gate values mean: {gate_values.mean().item():.4f}")
+            
             gated_fusion = weighted_fusion * gate_values
             
             return gated_fusion
