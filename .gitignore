@@ -1,0 +1,6 @@
+data
+data/*
+*.pdf
+*.pyc
+*.ply
+*.DS_Store
