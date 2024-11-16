@@ -84,10 +84,16 @@ class TransformNet(nn.Module):
 
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.bn3(self.conv3(x))
-        x = nn.MaxPool1d(x.size(-1))(x)
-        output = nn.Flatten(1)(x)
+        
+        # Remove the MaxPool1d and Flatten operations
+        # Instead, use an adaptive average pooling to get desired feature size
+        x = F.adaptive_avg_pool1d(x, 1)  # This will give us (batch_size, 1024, 1)
+        
+        # Repeat the features across the 3 dimensions
+        x = x.repeat(1, 1, 3)  # Now shape is (batch_size, 1024, 3)
+        x = x.transpose(1, 2)  # Final shape: (batch_size, 3, 1024)
 
-        return output, matrix3x3, matrix64x64
+        return x, matrix3x3, matrix64x64
 
 
 if __name__ == "__main__":
@@ -105,7 +111,7 @@ if __name__ == "__main__":
     transform_net = TransformNet()
     features, mat3, mat64 = transform_net(sample_input)
     print("\nTransformNet outputs:")
-    print("Features shape:", features.shape)        # Should be [2, 1024]
+    print("Features shape:", features.shape)        # Should be [2, 3, 1024]
     print("Matrix3x3 shape:", mat3.shape)          # Should be [2, 3, 3]
     print("Matrix64x64 shape:", mat64.shape)       # Should be [2, 64, 64]
 
