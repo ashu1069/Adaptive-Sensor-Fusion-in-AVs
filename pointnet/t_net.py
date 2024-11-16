@@ -108,4 +108,3 @@ if __name__ == "__main__":
     print("Features shape:", features.shape)        # Should be [2, 1024]
     print("Matrix3x3 shape:", mat3.shape)          # Should be [2, 3, 3]
     print("Matrix64x64 shape:", mat64.shape)       # Should be [2, 64, 64]
-
