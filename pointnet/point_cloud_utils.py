@@ -102,9 +102,9 @@ def read_bin_point_cloud(bin_path: str) -> np.ndarray:
     return np.array(points_list)
 
 # Example usage:
-point_cloud = read_bin_point_cloud('CSCI739/samples/velodyne/000044.bin')
-volume = point_cloud_to_volume(point_cloud, voxel_size=32, radius=1.0)
-print(volume.shape)
+# point_cloud = read_bin_point_cloud('CSCI739/samples/velodyne/000044.bin')
+# volume = point_cloud_to_volume(point_cloud, voxel_size=32, radius=1.0)
+# print(volume.shape)
     
     
     
