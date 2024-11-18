@@ -90,22 +90,22 @@ class TransformNet(nn.Module):
         return output, matrix3x3, matrix64x64
 
 
-if __name__ == "__main__":
-    # Create a sample input (batch_size=2, channels=3, points=5)
-    sample_input = torch.randn(2, 3, 5)
-    # Reshape for TNet input (batch_size, 1, points, channels)
-    tnet_input = sample_input.unsqueeze(1).transpose(2, 3)
+# if __name__ == "__main__":
+#     # Create a sample input (batch_size=2, channels=3, points=5)
+#     sample_input = torch.randn(2, 3, 5)
+#     # Reshape for TNet input (batch_size, 1, points, channels)
+#     tnet_input = sample_input.unsqueeze(1).transpose(2, 3)
     
-    # Test TNet
-    tnet = TNet(k=3)
-    tnet_output = tnet(tnet_input)
-    print("TNet output shape:", tnet_output.shape)  # Should be [2, 3, 3]
+#     # Test TNet
+#     tnet = TNet(k=3)
+#     tnet_output = tnet(tnet_input)
+#     print("TNet output shape:", tnet_output.shape)  # Should be [2, 3, 3]
     
-    # Test TransformNet
-    transform_net = TransformNet()
-    features, mat3, mat64 = transform_net(sample_input)
-    print("\nTransformNet outputs:")
-    print("Features shape:", features.shape)        # Should be [2, 1024]
-    print("Matrix3x3 shape:", mat3.shape)          # Should be [2, 3, 3]
-    print("Matrix64x64 shape:", mat64.shape)       # Should be [2, 64, 64]
+#     # Test TransformNet
+#     transform_net = TransformNet()
+#     features, mat3, mat64 = transform_net(sample_input)
+#     print("\nTransformNet outputs:")
+#     print("Features shape:", features.shape)        # Should be [2, 1024]
+#     print("Matrix3x3 shape:", mat3.shape)          # Should be [2, 3, 3]
+#     print("Matrix64x64 shape:", mat64.shape)       # Should be [2, 64, 64]
 
