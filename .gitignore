@@ -4,3 +4,7 @@ data/*
 *.pyc
 *.ply
 *.DS_Store
+*mlrun*
+*.pth
+*.txt
+*.out
