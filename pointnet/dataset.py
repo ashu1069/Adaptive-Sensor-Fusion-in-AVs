@@ -25,6 +25,7 @@ def read_bin_point_cloud(file_path, calib_data=None):
     Returns:
         points: numpy array of shape (N, 3)
     """
+    root_path = '' # add path to data
     # Read binary point cloud
     points = np.fromfile(file_path, dtype=np.float32)
     
@@ -46,7 +47,7 @@ def read_bin_point_cloud(file_path, calib_data=None):
     return points
 
 class PointCloudDataset(Dataset):
-    def __init__(self, point_clouds, labels, num_points=1024, calib_file=None):
+    def __init__(self, point_clouds, labels, num_points=1024, calib_file=None, mode = 'train'):
         """
         Args:
             point_clouds: list of paths to .bin files or numpy arrays of shape (N, 3)
@@ -58,8 +59,14 @@ class PointCloudDataset(Dataset):
         self.labels = labels
         self.num_points = num_points
         
+        """
+        TODO:
+        - Add path as a parameter
+        """
+        self.root_path = "/home/sm2678/csci_739_term_project/CSCI739/data/"
+        self.mode = mode
+        
         # Load calibration if provided
-        self.calib_data = None
         if calib_file and os.path.exists(calib_file):
             self.calib_data = read_calib_file(calib_file)
 
@@ -70,7 +77,17 @@ class PointCloudDataset(Dataset):
         # Load point cloud
         if isinstance(self.point_clouds[idx], str):
             # Load from .bin file
-            point_cloud = read_bin_point_cloud(self.point_clouds[idx], self.calib_data)
+            # print(os.path.join(self.root_path, self.point_clouds[idx]+'.bin'))
+            """
+            TODO:
+            - Handle path in __init__
+            """
+            if self.mode == 'train':
+                point_cloud = read_bin_point_cloud(os.path.join(
+                    self.root_path, 'velodyne', 'training', 'velodyne', self.point_clouds[idx]+'.bin'), self.calib_data)
+            else:
+                point_cloud = read_bin_point_cloud(os.path.join(
+                    self.root_path, 'velodyne', 'validation', 'velodyne', self.point_clouds[idx]+'.bin'), self.calib_data)
         else:
             # Already a numpy array
             point_cloud = self.point_clouds[idx]
