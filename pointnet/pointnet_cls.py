@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from .t_net import TNet, TransformNet
+from t_net import TNet, TransformNet
 
 class PointNetCls(nn.Module):
     def __init__(self, num_classes=40):  # Changed default to ModelNet40
