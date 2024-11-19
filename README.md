@@ -26,3 +26,28 @@
     - Projected Gradient Descent Attack (Image)
     - Point Perturbation Attack (LiDAR)
 - Incorporate adversarial training to improve model robustness
+
+#### Data Preprocessing
+While exploring the Kitti Datset here are some of the operations that are applied to meet certain rewquirements for processing them through ML algorithms:
+- Lidar
+    - Problems: 
+        - Different number of opservation points per lidar scan
+        - May need transformation - Is in a different coordinate system than camera coordinates
+    - Solutions:
+        - Voxelization with fixed number of output points 
+        - Functionality to transform the point cloud coordinates
+- Camers
+    - Problems:
+        - Diffrent image sizes
+    - Solutions:
+        - Resize the image : resized based on the model/user's needs
+- labels
+    - Problems:
+        - Need to check if the bounding box coordinates are in the camera's perspective or not!
+    - Solution:
+        - Ask professor and google
+
+The data loder gets the following data elemets in each batch:
+- Images from left camera
+- Lidar Point clouds, if calib is provided the points are transformed to cam space
+- Labels with all data points
