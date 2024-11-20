@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from t_net import TNet, TransformNet
+from .t_net import TNet, TransformNet
 
 class PointNetCls(nn.Module):
     def __init__(self, num_classes=40):  # Changed default to ModelNet40
@@ -20,7 +20,8 @@ class PointNetCls(nn.Module):
         
         self.dropout = nn.Dropout(p=0.3)
 
-    def forward(self, x, return_global_features=False):
+    def forward(self, x, return_global_features=True):
+        print(f'input into pointnet = > {x.shape}')
         # Get global features and transformation matrices
         global_features, matrix3x3, matrix64x64 = self.feature_transform(x)
         

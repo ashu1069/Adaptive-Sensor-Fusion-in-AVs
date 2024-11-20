@@ -69,6 +69,8 @@ class PointCloudDataset(Dataset):
         # Load calibration if provided
         if calib_file and os.path.exists(calib_file):
             self.calib_data = read_calib_file(calib_file)
+        else:
+            self.calib_data = None
 
     def __len__(self):
         return len(self.point_clouds)
