@@ -46,6 +46,7 @@ class DetectionHead(nn.Module):
         cls_pred = self.cls_head(shared_features)
         
         # Reshape predictions to (B, H, W, num_anchors*4) and (B, H, W, num_anchors*num_classes)
+        # Todo: Update the loss fucntion to calc IOU and class prediction loss
         bbox_pred = bbox_pred.permute(0, 2, 3, 1)
         cls_pred = cls_pred.permute(0, 2, 3, 1)
         

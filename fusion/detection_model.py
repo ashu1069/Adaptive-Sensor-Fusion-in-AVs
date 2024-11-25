@@ -15,8 +15,7 @@ class DetectionModel(nn.Module):
         
     def forward(self, img_feats, lidar_feats):
         # Fuse features
-        fused_features = self.fusion_module(img_feats, lidar_feats)
-        
+        fused_features, attention_weights = self.fusion_module(img_feats, lidar_feats)
         # Get predictions
         bbox_pred, cls_pred = self.detection_head(fused_features)
         

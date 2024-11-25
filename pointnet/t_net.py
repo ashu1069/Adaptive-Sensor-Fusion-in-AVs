@@ -48,7 +48,7 @@ class TNet(nn.Module):
         # Add identity matrix to the output
         identity = torch.eye(self.k, requires_grad=True).repeat(batch_size, 1, 1)
         if x.is_cuda:
-            identity = identity.cuda()
+            identity = identity.to(x.device)
         x = self.fc3(x).view(-1, self.k, self.k) + identity
         
         return x

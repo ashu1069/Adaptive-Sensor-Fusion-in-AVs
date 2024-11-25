@@ -61,12 +61,11 @@ class CrossModalAttention(nn.Module):
         return self.last_attention_weights
 
 class FusionModule(nn.Module):
-    def __init__(self, img_channels=2048, lidar_channels=1024):
+    def __init__(self, img_channels=2048, lidar_channels=512):
         super().__init__()
         
         self.img_channels = img_channels
         self.lidar_channels = lidar_channels
-        
         # Cross-modal attention
         self.attention = CrossModalAttention(img_channels, lidar_channels)
         
@@ -97,7 +96,6 @@ class FusionModule(nn.Module):
         if lidar_feats is None:
             # If only image features are present, skip attention and return image features
             return img_feats
-            
         # Regular fusion when both modalities are present
         attended_lidar = self.attention(img_feats, lidar_feats)
         fused_feats = torch.cat([img_feats, attended_lidar], dim=1)
