@@ -17,6 +17,13 @@ if parent_dir not in sys.path:
 from pointnet.pointnet_cls import PointNetCls
 
 class PointCloudDataset(Dataset):
+    '''
+    Handles both LiDAR and camera data
+    Processes KITTI format labels
+    Applies transformations to images (224x224)
+    Preprocesses point clouds (2048 points)
+    Maps KITTI classes to indices
+    '''
     def __init__(self, root_path, lidar_path, camera_path, calib_path, label_path,
                  mode='train', img_backbone=None, lidar_backbone=None):
         """
@@ -35,10 +42,7 @@ class PointCloudDataset(Dataset):
         self.label_path = label_path.format(mode)
         self.img_backbone = img_backbone
         self.lidar_backbone = lidar_backbone
-        # Get device from backbone if available, otherwise use cuda:4
-        self.device = (next(img_backbone.parameters()).device 
-                      if img_backbone is not None 
-                      else torch.device("cuda:4" if torch.cuda.is_available() else "cpu"))
+        
         # Image preprocessing for ResNet50
         self.image_transform = transforms.Compose([
             transforms.Resize((224, 224)),
@@ -48,12 +52,11 @@ class PointCloudDataset(Dataset):
         ])
         
         # Point cloud preprocessing for PointNet
-        self.num_points = 2048  # Adjust based on your PointNet configuration
+        self.num_points = 512  # Adjust based on your PointNet configuration
         
         # Get all frame IDs
         self.frame_ids = [x.split('.')[0] for x in os.listdir(os.path.join(
             root_path, self.lidar_path))]
-        # print(self.frame_ids)
             
         # Complete KITTI class mapping
         self.class_map = {
@@ -72,7 +75,7 @@ class PointCloudDataset(Dataset):
         return len(self.frame_ids)
 
     def _read_labels(self, label_path):
-        """Read KITTI label file and return targets"""
+        """Read KITTI label file and return 2D bounding box targets"""
         boxes = []
         classes = []
         
@@ -81,10 +84,11 @@ class PointCloudDataset(Dataset):
                 parts = line.strip().split()
                 cls_name = parts[0]
                 
-                # Get class index (all classes are now included)
+                # Get class index
                 cls_idx = self.class_map.get(cls_name, self.class_map['DontCare'])
                 
-                # Parse box parameters [x,y,z,l,w,h,rot]
+                # Parse 2D box parameters [left, top, right, bottom]
+                # KITTI format: left(4), top(5), right(6), bottom(7)
                 box = np.array([float(x) for x in parts[4:8]], dtype=np.float32)
                 
                 boxes.append(box)
@@ -102,9 +106,14 @@ class PointCloudDataset(Dataset):
             choice = np.random.choice(point_cloud.shape[0], self.num_points, replace=False)
             point_cloud = point_cloud[choice, :]
         else:
-            # Pad with zeros if too few points
-            zeros = np.zeros((self.num_points - point_cloud.shape[0], 3))
-            point_cloud = np.vstack((point_cloud, zeros))
+            # Use interpolation for insufficient points
+            num_missing = self.num_points - point_cloud.shape[0]
+            # Generate indices for interpolation
+            idx = np.linspace(0, point_cloud.shape[0] - 1, num_missing)
+            idx = np.floor(idx).astype(int)
+            # Interpolate between consecutive points
+            interpolated = (point_cloud[idx] + np.roll(point_cloud[idx], -1, axis=0)) / 2
+            point_cloud = np.vstack((point_cloud, interpolated))
         
         # Convert to tensor and transpose for PointNet input (3, N)
         point_cloud = torch.FloatTensor(point_cloud)
@@ -119,46 +128,56 @@ class PointCloudDataset(Dataset):
         image_file = os.path.join(self.root_path, self.camera_path, f"{frame_id}.png")
         label_file = os.path.join(self.root_path, self.label_path, f"{frame_id}.txt")
 
-        # Load and preprocess image
+        # Load and preprocess image for ResNet50
         image = Image.open(image_file).convert('RGB')
         image = self.image_transform(image)
         
-        # Extract image features
+        
+        # Extract image features using ResNet50
         if self.img_backbone is not None:
             with torch.no_grad():
-                image = image.unsqueeze(0).to(self.device)
-                image_features = self.img_backbone(image)
-                image_features = image_features.squeeze(0)
+                image = image.unsqueeze(0)  # Add batch dimension
+                # Get features from backbone
+                image_features = self.img_backbone(image)  # Shape: (1, 2048, 7, 7)
+                # Keep original ResNet features without projection
+                image_features = image_features.squeeze(0)  # Shape: (2048, 7, 7)
         else:
-            image_features = image.to(self.device)
+            # Initialize dummy features with correct shape
+            image_features = torch.zeros((2048, 7, 7))
 
-        # Load and preprocess point cloud
+        
+        # Load and preprocess point cloud for PointNet
         point_cloud = np.fromfile(lidar_file, dtype=np.float32).reshape(-1, 4)
         point_cloud = self.preprocess_pointcloud(point_cloud)
         
-        # Extract point cloud features
+        
+        # Extract point cloud features using PointNet
         if self.lidar_backbone is not None:
             with torch.no_grad():
-                point_cloud = point_cloud.to(self.device)
-                lidar_features, _, _ = self.lidar_backbone(point_cloud.unsqueeze(0))
-                lidar_features = lidar_features.squeeze()
+                point_cloud = point_cloud.unsqueeze(0)
+                lidar_features, _, _ = self.lidar_backbone(point_cloud)
+                # Keep original 512-dimensional features
+                lidar_features = lidar_features.squeeze()  # Shape: (512,)
         else:
-            lidar_features = point_cloud.to(self.device)
+            # Initialize dummy features with correct shape
+            lidar_features = torch.zeros(512)
 
+        # Print feature shapes
+        
         # Load labels
         boxes, classes = self._read_labels(label_file)
         
         # Prepare targets
         targets = {
-            'boxes_3d': torch.tensor(boxes, dtype=torch.float32),
+            'boxes_2d': torch.tensor(boxes, dtype=torch.float32),
             'classes': torch.tensor(classes, dtype=torch.long),
             'num_objects': len(boxes)
         }
-
-        # Return features and targets
+        
         return {
-            'image_features': image_features,
-            'lidar_features': lidar_features,
+            'frame_id': frame_id,
+            'image_features': image_features,  # Shape: (2048, 7, 7)
+            'lidar_features': lidar_features,  # Shape: (512,)
             'targets': targets
         }
 
@@ -183,18 +202,18 @@ class LazyDataLoader:
             'lidar_features': [],
             'targets': []
         }
-        # print(batch[0])
+
         for sample in batch:
-            # batch_dict['frame_ids'].append(sample['frame_id'])
-            # Image features should be (C, H, W)
+            batch_dict['frame_ids'].append(sample['frame_id'])
+            # Image features should be (2048, 7, 7)
             batch_dict['image_features'].append(sample['image_features'])
-            # Lidar features should be (C,)
+            # Lidar features should be (512,)
             batch_dict['lidar_features'].append(sample['lidar_features'])
             batch_dict['targets'].append(sample['targets'])
 
-        # Stack to get (B, C, H, W) for image features
+        # Stack to get (B, 2048, 7, 7) for image features
         batch_dict['image_features'] = torch.stack(batch_dict['image_features'])
-        # Stack to get (B, C) for lidar features
+        # Stack to get (B, 512) for lidar features
         batch_dict['lidar_features'] = torch.stack(batch_dict['lidar_features'])
 
         return batch_dict
@@ -219,10 +238,10 @@ def get_dataloader(root_path: str,
         lidar_backbone: Pre-trained lidar backbone model
     """
     paths = {
-        'lidar': os.path.join('velodyne', '{}', 'velodyne'),
-        'camera': os.path.join('left_images', '{}', 'image_2'),
+        'lidar': os.path.join('velodyne', '{}'),
+        'camera': os.path.join('image_left', '{}'),
         'calib': os.path.join('calibration', '{}', 'calib'),
-        'label': os.path.join('labels', '{}', 'label_2') 
+        'label': os.path.join('label_2', '{}') 
     }
     
     dataset = PointCloudDataset(
@@ -247,32 +266,40 @@ def get_dataloader(root_path: str,
 
 def initialize_models(pointnet_weights_path=None):
     """Initialize both backbone models"""
-    # Set device consistently
-    device = torch.device("cuda:4" if torch.cuda.is_available() else "cpu")  # Using cuda:4 consistently
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Initialize ResNet50
     resnet = resnet50(weights='IMAGENET1K_V1')
-    resnet = torch.nn.Sequential(*list(resnet.children())[:-2]) 
+    # Remove the final classification layer AND average pooling
+    resnet = torch.nn.Sequential(*list(resnet.children())[:-2])  # Changed from [:-1] to [:-2]
     resnet.eval()
     resnet = resnet.to(device)
 
     # Initialize PointNet
     pointnet = PointNetCls()
     if pointnet_weights_path:
-        checkpoint = torch.load(pointnet_weights_path, map_location=device)
+        # Load weights with CPU mapping if CUDA is not available
+        checkpoint = torch.load(pointnet_weights_path, 
+                              map_location=device)
         
+        # Extract model state dict from checkpoint
         if 'model_state_dict' in checkpoint:
             state_dict = checkpoint['model_state_dict']
         else:
             state_dict = checkpoint
             
+        # Create new state dict with matching keys
         new_state_dict = {}
         for k, v in state_dict.items():
+            # Remove 'module.' prefix if it exists
             if k.startswith('module.'):
                 k = k[7:]
-            if k not in ['epoch', 'optimizer_state_dict', 'val_acc']:
-                new_state_dict[k] = v
+            # Skip unexpected keys
+            if k in ['epoch', 'optimizer_state_dict', 'val_acc']:
+                continue
+            new_state_dict[k] = v
             
+        # Load the cleaned state dict
         try:
             pointnet.load_state_dict(new_state_dict, strict=False)
             print("PointNet weights loaded successfully")
@@ -282,17 +309,21 @@ def initialize_models(pointnet_weights_path=None):
     pointnet.eval()
     pointnet = pointnet.to(device)
 
-    return resnet, pointnet, device
+    return resnet, pointnet 
 
 def main():
     """Example usage with both backbones"""
     root_path = "CSCI_files/dev_datakit"
-    pointnet_weights = "/home/sk4858/CSCI739/model_weights/checkpoint_epoch_200.pth"
+    pointnet_weights = "CSCI_files/pointnet_checkpoint_epoch_200.pth"
     
     # Initialize models
-    resnet_backbone, pointnet_backbone, device = initialize_models(pointnet_weights)
+    resnet_backbone, pointnet_backbone = initialize_models(pointnet_weights)
     
-    # Device is now handled in initialize_models()
+    # Test ResNet backbone output shape
+    dummy_input = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        features = resnet_backbone(dummy_input)
+        print(f"ResNet backbone output shape: {features.shape}")  # Should print (1, 2048, 7, 7)
     
     # Updated split name to match your directory structure
     train_loader = get_dataloader(
@@ -311,6 +342,16 @@ def main():
     print(f"Image features shape: {batch['image_features'].shape}")
     print(f"LiDAR features shape: {batch['lidar_features'].shape}")
     print(f"Number of targets: {len(batch['targets'])}")
+    
+    # Add these lines to print target details
+    print("\nTarget details:")
+    for i, target in enumerate(batch['targets']):
+        print(f"\nSample {i}:")
+        print(f"2D Boxes shape: {target['boxes_2d'].shape}")
+        print(f"Classes shape: {target['classes'].shape}")
+        print(f"Number of objects: {target['num_objects']}")
+        print(f"2D Boxes: {target['boxes_2d']}")
+        print(f"Classes: {target['classes']}")
 
 if __name__ == "__main__":
     main()
