@@ -26,5 +26,5 @@ def read_checkpoint_metrics(checkpoint_path):
         print(f"  F1-score: {metrics['f1_per_class'][i]:.4f}")
 
 # Example usage
-checkpoint_path = "/home/stu12/s11/ak1825/CSCI739/pointnet/checkpoints/model_epoch_14.pth"  # Replace with your checkpoint path
+checkpoint_path = "/home/stu12/s11/ak1825/checkpoints/best_model.pth"  # Replace with your checkpoint path
 read_checkpoint_metrics(checkpoint_path)
