@@ -22,6 +22,28 @@ cd fusion
 ```bash
 pip install -r requirements.txt
 ```
+## Usage
 
-## Project Structure
+1. Prepare the KITTI dataset:
+    - Download the KITTI object detection dataset
+    - Organize the data in the following structure:
+
+2. Train the model:
+
+```bash
+python train.py --dataset_root /path/to/dataset --yolo_path /path/to/yolov8n.pt --pointnet_path /path/to/pointnet.pth
+--batch_size 16 --epochs 100 --lr 0.001 --save_dir /path/to/save/model
+```
+
+3. Evaluate the model:
+
+```bash
+python evaluate.py --dataset_root /path/to/dataset --weights /path/to/save/model/checkpoint.pth --output_dir /path/to/save/results
+```
+
+## Model Architecture
+The system consists of three main components:
+1. **Feature Extractors**: Pre-trained YOLOv8 and PointNet models
+2. **Fusion Module**: Adaptive fusion with element-wise operations and cross-attention
+3. **Detection Head**: Multi-scale object detection with FPN
 
