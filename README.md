@@ -15,7 +15,7 @@ This project implements a multi-modal 3D object detection system that fuses LiDA
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/fusion.git
+git clone https://github.com/ashu1069/CSCI739.git
 cd fusion
 ```
 
