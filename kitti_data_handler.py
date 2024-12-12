@@ -1,4 +1,3 @@
-
 import os
 from typing import Dict
 import numpy as np
@@ -7,9 +6,11 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from pointnet.dataset import read_bin_point_cloud, read_calib_file
-from vit_utils import label_to_id
+from utils.dataset import label_to_id
 import sys
 import open3d as o3d
+import math
+from detr import mapping_dict, id_to_label
 
 class PointCloudDataset(Dataset):
     def __init__(self, root_path, lidar_path, camera_path, calib_path, 
@@ -72,22 +73,28 @@ class LazyDataLoader:
                  shuffle:bool = True,
                  num_workers:int = 4,
                  image_size:tuple = (224, 224),
-                 label_data_loc = list(range(15))):
+                 label_data_loc = list(range(15)),
+                 sampler=None,
+                 pin_memory: bool = False,
+                 persistent_workers: bool = False):
         """
         Custom data loader that implements lazy loading
         """
         self.dataset = dataset
         self.batch_size = batch_size
-        self.shuffle = shuffle
+        self.shuffle = shuffle and sampler is None
         self.num_workers = num_workers
         self.image_size = image_size
-        self.label_data_loc = label_data_loc # indices of labels to extract
+        self.label_data_loc = label_data_loc
         self.dataloader = DataLoader(
             dataset, 
             batch_size=batch_size,
-            shuffle=shuffle,
+            shuffle=self.shuffle,
             num_workers=num_workers,
-            collate_fn=self.collate_fn
+            collate_fn=self.collate_fn,
+            sampler=sampler,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers
         )
 
     def collate_fn(self, batch):
@@ -99,7 +106,8 @@ class LazyDataLoader:
             'images': [],
             'calibrations': [],
             'labels': [],
-            'sample_ids': []
+            'sample_ids': [],
+            'image_size': [],
         }
         i = -1
         for sample in batch:
@@ -120,19 +128,24 @@ class LazyDataLoader:
                 calib_data=calib
             )
             processed_batch['point_clouds'].append(
-                self._voxelize_grid(point_cloud))            
+                self._voxelize_grid(point_cloud, 
+                                   voxel_size=0.1, 
+                                   num_points=self.dataset.num_points))            
+           
             # Load image if required
             if sample['config']['return_image']:
-                image = self._load_image(sample['image_path'])
+                image, img_size  = self._load_image(sample['image_path'])
                 # print(image, sample['image_path'])
                 processed_batch['images'].append(image)
+                processed_batch['image_size'].append(img_size)
                 
             # Load labels if required
             if sample['config']['return_labels']:
-                label = self._load_label(sample['label_path'])
+                label = self._load_label(sample['label_path'], image)
                 label = [torch.tensor(x) for x in label]
+                
                 processed_batch['labels'].append(label)
-            # print(processed_batch)
+                
         # Convert lists to tensors
         processed_batch['point_clouds'] = torch.stack(processed_batch['point_clouds'])
         if processed_batch['images']:
@@ -144,14 +157,16 @@ class LazyDataLoader:
     
     def _load_image(self, image_path):
         image = Image.open(image_path).convert('RGB')
+        img_size = image.size
         if self.dataset.image_transform:
             image = self.dataset.image_transform(image)
         else:
             image = transforms.ToTensor()(image)
-        image = transforms.Resize(self.image_size)(image)
-        return image
+            image = transforms.Resize(self.image_size)(image)
+        return image, img_size
     
-    def _voxelize_grid(self, points:np.array, voxel_size=0.1, num_points=50_000):
+    def _voxelize_grid(self, points:np.array, voxel_size=0.1, 
+                       num_points=50_000):
         # Convert NumPy array to Open3D PointCloud
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points)
@@ -163,18 +178,21 @@ class LazyDataLoader:
         # Resample to ensure the desired number of points
         if num_points is not None:
             if len(voxelized_points) > num_points:
-                indices = np.random.choice(len(voxelized_points), num_points, replace=False)
+                indices = np.random.choice(len(voxelized_points), 
+                                           num_points, replace=False)
                 voxelized_points = voxelized_points[indices]
             elif len(voxelized_points) < num_points:
-                additional_indices = np.random.choice(len(voxelized_points), num_points - len(voxelized_points), replace=True)
-                voxelized_points = np.vstack((voxelized_points, voxelized_points[additional_indices]))
-
+                additional_indices = np.random.choice(len(voxelized_points), 
+                            num_points - len(voxelized_points), replace=True)
+                voxelized_points = np.vstack((voxelized_points, 
+                                        voxelized_points[additional_indices]))
+        
         # Convert to PyTorch tensor
         torch_tensor = torch.tensor(voxelized_points, dtype=torch.float32)
         # final_num_points = torch_tensor.shape[0]
         return torch_tensor
         
-    def _load_label(self, label_path):
+    def _load_label(self, label_path, image):
         '''
         Data reader for label file, data description:
             0-   Object type with dtype int
@@ -196,18 +214,38 @@ class LazyDataLoader:
         labels = []
         with open(label_path, 'r') as f:
             label_content = f.readlines()
-        
+        scaling_factor = (1242, 375)# max x , max y
         for lable_line in label_content:
             parts = lable_line.strip().split()
             label = []
+            
+            # Filter out labels that are not in the mapping_dict
+            if not parts[0] in mapping_dict:
+                continue
+            
             for loc in self.label_data_loc:
                 if loc== 0:
-                    label.append(label_to_id(parts[loc]))
+                    label.append(label_to_id(mapping_dict[parts[loc]]))
                 elif loc ==2:
                     label.append(int(parts[loc]))
+                elif loc ==4 or loc==6:
+                    val = float(parts[loc])/1242
+                    if val>1:
+                        label.append(1)
+                        print('Warning: bbox out of image')
+                    else:
+                        label.append(val)
+                elif loc ==5 or loc==7:
+                    val = float(parts[loc])/376
+                    if val>1:
+                        label.append(1)
+                        print(f'Warning: bbox out of image {parts[loc]}')
+                    else:
+                        label.append(val)
                 else:
                     label.append(float(parts[loc]))
-        
+            # print("after",label)
+            # sys.exit()
             # Add score if it exists (only in results files)
             if len(parts) > 15:
                 label['score'] = float(parts[15])
@@ -215,44 +253,45 @@ class LazyDataLoader:
         return labels
 
 # # **************** Sample usage **************** 
-# if __name__ == "__main__":
-#     # Example of how to use the dataset and dataloader
-#     data_dir = "/home/sm2678/csci_739_term_project/CSCI739/data"
-#     camera_dir = "left_images/{}/image_2"
-#     lidar_dir = "velodyne/{}/velodyne/"
-#     calib_dir = "calibration/{}/calib"
-#     label_dir = "labels/{}/label_2"
+if __name__ == "__main__":
+    # Example of how to use the dataset and dataloader
+    data_dir = "/home/sm2678/csci_739_term_project/CSCI739/data"
+    camera_dir = "left_images/{}/image_2"
+    lidar_dir = "velodyne/{}/velodyne/"
+    calib_dir = "calibration/{}/calib"
+    label_dir = "labels/{}/label_2"
 
-#     mode = 'training'  # or 'validation' or 'test'
+    mode = 'training'  # or 'validation' or 'test'
 
     
     
-#     dataset = PointCloudDataset(
-#         data_dir,lidar_dir, camera_dir, calib_dir, label_dir, 1024, "training",
-#         return_image=True, return_calib=True, return_labels=True
-#     )
+    dataset = PointCloudDataset(
+        data_dir,lidar_dir, camera_dir, calib_dir, label_dir, 50_000, "training",
+        return_image=True, return_calib=True, return_labels=True
+    )
     
-#     lazy_loader = LazyDataLoader(
-#         dataset=dataset,
-#         batch_size=4,
-#         shuffle=True,
-#         num_workers=1
-#     )
-#     i=0
-#     for batch in lazy_loader.dataloader:
-#         i+=1
-#         print(i)
-#         # Each batch will contain:
-#         point_clouds = batch['point_clouds']      # Shape: (batch_size, num_points, 3)
-#         images = batch['images']                  # Shape: (batch_size, C, H, W)
-#         labels = batch['labels']                  # List of label dictionaries
-#         calibrations = batch['calibrations']      # List of calibration dictionaries
-#         sample_ids = batch['sample_ids']          # List of sample IDs
+    lazy_loader = LazyDataLoader(
+        dataset=dataset,
+        batch_size=4,
+        shuffle=True,
+        num_workers=1
+    )
+    i=0
+    for batch in lazy_loader.dataloader:
+        i+=1
+        print(i)
+        # Each batch will contain:
+        point_clouds = batch['point_clouds']      # Shape: (batch_size, num_points, 3)
+        images = batch['images']                  # Shape: (batch_size, C, H, W)
+        labels = batch['labels']                  # List of label dictionaries
+        calibrations = batch['calibrations']      # List of calibration dictionaries
+        sample_ids = batch['sample_ids']          # List of sample IDs
 
-#         # Print shapes and contents
-#         print(f"Point clouds shape: {point_clouds.shape}")
-#         print(f"Images shape: {images.shape}")
-#         print(f"Number of labels: {len(labels)}")
-#         print(f"Sample IDs: {sample_ids}")
+        # Print shapes and contents
+        print(f"Point clouds shape: {point_clouds.shape}")
+        print(f"Images shape: {images.shape}")
+        print(f"Number of labels: {len(labels)}")
+        print(f"Sample IDs: {sample_ids}")
+        break
         
         
