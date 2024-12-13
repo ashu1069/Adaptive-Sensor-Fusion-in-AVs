@@ -22,11 +22,24 @@ cd fusion
 ```bash
 pip install -r requirements.txt
 ```
-## Usage
-
 1. Prepare the KITTI dataset:
+
     - Download the KITTI object detection dataset
     - Organize the data in the following structure:
+
+            data/
+                ├── calibration/
+                │   └── training/
+                │       └── calib/
+                ├── left_images/
+                │   └── training/
+                │       └── image_2/
+                ├── labels/
+                │   └── training/
+                │       └── label_2/
+                └── velodyne/
+                    └── training/
+                        └── velodyne/
 
 2. Train the model:
 
