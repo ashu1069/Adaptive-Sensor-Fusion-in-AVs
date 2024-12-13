@@ -8,3 +8,4 @@ data/*
 *.pth
 *.txt
 *.out
+*.png
